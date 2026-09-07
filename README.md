@@ -40,5 +40,8 @@
 
 ## ⚙️ Сборка из исходников
 
-1. Клонируйте репозиторий:
-git clone https://github.com/CarfenTanylovich/Med_tracker.git
+Прожэкт требует сборки через Android Studio или Gradle:
+
+1. Установите **Android Studio** (желательно актуальной версии с поддержкой Kotlin и Compose).
+2. Клонируйте репозиторий на компьютер:
+git clone [https://github.com/CarfenTanylovich/Med_tracker.git](https://github.com/CarfenTanylovich/Med_tracker.git)
