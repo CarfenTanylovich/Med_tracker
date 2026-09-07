@@ -79,7 +79,8 @@ fun Med_trackerTheme(
         // Динамические цвета на API 31+
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             when (themeMode) {
-                AppThemeMode.AMOLED, AppThemeMode.DARK -> dynamicDarkColorScheme(context)
+                AppThemeMode.AMOLED -> dynamicDarkColorScheme(context).toAmoled()
+                AppThemeMode.DARK -> dynamicDarkColorScheme(context)
                 AppThemeMode.LIGHT -> dynamicLightColorScheme(context)
                 AppThemeMode.SYSTEM -> if (systemInDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             }

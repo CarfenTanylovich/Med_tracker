@@ -1,20 +1,19 @@
 package com.example.med_tracker.presentation.history
 
-import android.app.Application
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.med_tracker.data.local.AppDatabase
 import com.example.med_tracker.data.local.entity.IntakeStatus
 import com.example.med_tracker.data.repository.MedicationRepository
 import com.example.med_tracker.domain.model.TodayIntakeItem
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import java.util.Calendar
+import javax.inject.Inject
 
 data class HistoryUiState(
     val logs: List<TodayIntakeItem> = emptyList(),
@@ -24,34 +23,47 @@ data class HistoryUiState(
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class HistoryViewModel(application: Application) : AndroidViewModel(application) {
+@HiltViewModel
+class HistoryViewModel @Inject constructor(
+    private val repository: MedicationRepository
+) : ViewModel() {
 
-    private val repository = MedicationRepository(AppDatabase.getInstance(application))
-    private val periodDays = MutableStateFlow(7) // По умолчанию 7 дней
+    private val _periodDays = MutableStateFlow(7)
 
-    val uiState: StateFlow<HistoryUiState> = periodDays.flatMapLatest { days ->
-        val endCal = Calendar.getInstance()
-        val startCal = Calendar.getInstance().apply {
-            add(Calendar.DAY_OF_YEAR, -days)
+    val uiState: StateFlow<HistoryUiState> = _periodDays
+        .flatMapLatest { days ->
+            repository.getHistoryLogsFlow(days)
         }
-        repository.getHistoryLogs(startCal.timeInMillis, endCal.timeInMillis)
-    }.combine(periodDays) { logs, _ ->
-        val total = logs.count { it.status != IntakeStatus.PENDING }
-        val taken = logs.count { it.status == IntakeStatus.TAKEN }
-        val percentage = if (total > 0) (taken * 100) / total else 0
-        HistoryUiState(
-            logs = logs.sortedByDescending { it.scheduledTimeMillis },
-            adherencePercentage = percentage,
-            totalCount = total,
-            takenCount = taken
+        .map { rawLogs ->
+            val currentTime = System.currentTimeMillis()
+
+            // Если время вышло, а статус всё еще PENDING — для истории это MISSED
+            val processedLogs = rawLogs.map { item ->
+                if (item.status == IntakeStatus.PENDING && item.scheduledTimeMillis <= currentTime) {
+                    item.copy(status = IntakeStatus.MISSED)
+                } else {
+                    item
+                }
+            }.filter { it.scheduledTimeMillis <= currentTime } // Будущие приемы в историю не идут
+
+            val taken = processedLogs.count { it.status == IntakeStatus.TAKEN }
+            val total = processedLogs.size
+            val percentage = if (total > 0) (taken * 100) / total else 0
+
+            HistoryUiState(
+                logs = processedLogs.sortedByDescending { it.scheduledTimeMillis },
+                adherencePercentage = percentage,
+                totalCount = total,
+                takenCount = taken
+            )
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = HistoryUiState()
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = HistoryUiState()
-    )
 
     fun setPeriod(days: Int) {
-        periodDays.value = days
+        _periodDays.value = days
     }
 }

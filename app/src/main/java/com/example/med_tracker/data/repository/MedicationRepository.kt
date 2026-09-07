@@ -9,9 +9,11 @@ import com.example.med_tracker.data.local.entity.MedicationEntity
 import com.example.med_tracker.data.local.entity.ScheduleEntity
 import com.example.med_tracker.data.local.entity.ScheduleType
 import com.example.med_tracker.domain.model.TodayIntakeItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
@@ -22,6 +24,31 @@ class MedicationRepository(database: AppDatabase) {
     private val intakeLogDao = database.intakeLogDao()
 
     val allMedications: Flow<List<MedicationEntity>> = medicationDao.getAllMedications()
+
+    private fun getStartOfDay(timeMillis: Long): Long {
+        val calendar = Calendar.getInstance().apply { timeInMillis = timeMillis }
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
+    private fun getEndOfDay(timeMillis: Long): Long {
+        val calendar = Calendar.getInstance().apply { timeInMillis = timeMillis }
+        calendar.set(Calendar.HOUR_OF_DAY, 23)
+        calendar.set(Calendar.MINUTE, 59)
+        calendar.set(Calendar.SECOND, 59)
+        calendar.set(Calendar.MILLISECOND, 999)
+        return calendar.timeInMillis
+    }
+
+    private fun getDaysBetween(startMillis: Long, endMillis: Long): Long {
+        val startOfDay = getStartOfDay(startMillis)
+        val endOfDay = getStartOfDay(endMillis)
+        val diff = endOfDay - startOfDay
+        return diff / (24 * 60 * 60 * 1000L)
+    }
 
     suspend fun addMedicationWithSchedules(
         medication: MedicationEntity,
@@ -53,12 +80,21 @@ class MedicationRepository(database: AppDatabase) {
         generateLogsAhead(context, daysAhead = 14)
     }
 
-    suspend fun deleteMedication(medication: MedicationEntity) {
+    suspend fun deleteMedication(medication: MedicationEntity, context: Context) {
+        val upcomingLogs = intakeLogDao.getUpcomingLogs().first()
+        val medicationLogs = upcomingLogs.filter { it.medicationId == medication.id }
+        medicationLogs.forEach { log ->
+            AlarmScheduler.cancelAlarm(context, log.id)
+        }
         medicationDao.deleteMedication(medication)
     }
 
     suspend fun updateMedication(medication: MedicationEntity) {
         medicationDao.update(medication)
+    }
+
+    suspend fun updateMedicationQuantity(id: Long, quantity: Int) {
+        medicationDao.updateQuantity(id, quantity)
     }
 
     suspend fun updateMedicationWithSchedules(
@@ -73,10 +109,17 @@ class MedicationRepository(database: AppDatabase) {
     ) {
         medicationDao.update(medication)
 
+        val now = System.currentTimeMillis()
+        val futurePendingLogs = intakeLogDao.getFuturePendingLogsSync(medication.id, now)
+        futurePendingLogs.forEach { log ->
+            AlarmScheduler.cancelAlarm(context, log.id)
+        }
+        intakeLogDao.deleteFuturePendingLogs(medication.id, now)
+
         val oldSchedules = scheduleDao.getSchedulesForMedicationSync(medication.id)
         oldSchedules.forEach { scheduleDao.deleteSchedule(it) }
 
-        val todayMidnight = getStartOfDay(System.currentTimeMillis())
+        val todayMidnight = getStartOfDay(now)
         times.forEach { time ->
             scheduleDao.insertSchedule(
                 ScheduleEntity(
@@ -93,6 +136,10 @@ class MedicationRepository(database: AppDatabase) {
         }
 
         generateLogsAhead(context, daysAhead = 14)
+    }
+
+    suspend fun getSchedulesForMedication(medicationId: Long): List<ScheduleEntity> {
+        return scheduleDao.getSchedulesForMedicationSync(medicationId)
     }
 
     suspend fun getScheduleTimesForMedication(medicationId: Long): List<String> {
@@ -126,6 +173,14 @@ class MedicationRepository(database: AppDatabase) {
         }
     }
 
+    fun getHistoryLogsFlow(days: Int): Flow<List<TodayIntakeItem>> {
+        val calendar = Calendar.getInstance()
+        val endTimeMillis = calendar.timeInMillis
+        calendar.add(Calendar.DAY_OF_YEAR, -days)
+        val startTimeMillis = calendar.timeInMillis
+        return getHistoryLogs(startTimeMillis, endTimeMillis)
+    }
+
     private fun mapToItems(
         logs: List<IntakeLogEntity>,
         medications: List<MedicationEntity>
@@ -157,15 +212,25 @@ class MedicationRepository(database: AppDatabase) {
         actualTimeMillis: Long?
     ) {
         intakeLogDao.updateStatus(item.logId, newStatus, actualTimeMillis)
+
         if (newStatus == IntakeStatus.TAKEN && item.status != IntakeStatus.TAKEN) {
             medicationDao.decrementQuantity(item.medicationId)
+        } else if (item.status == IntakeStatus.TAKEN && newStatus != IntakeStatus.TAKEN) {
+            medicationDao.updateQuantity(item.medicationId, item.remainingQuantity + 1)
         }
+
         AlarmScheduler.cancelAlarm(context, item.logId)
     }
 
     suspend fun generateLogsAhead(context: Context, daysAhead: Int = 14) {
+        withContext(Dispatchers.IO) {
+            generateLogsInDatabase(daysAhead)
+            scheduleUpcomingAlarms(context)
+        }
+    }
+
+    private suspend fun generateLogsInDatabase(daysAhead: Int) {
         val allSchedules = scheduleDao.getAllSchedulesSync()
-        val medications = medicationDao.getAllMedications().first().associateBy { it.id }
 
         for (offset in 0..daysAhead) {
             val calendar = Calendar.getInstance().apply {
@@ -190,27 +255,26 @@ class MedicationRepository(database: AppDatabase) {
                 val isScheduled = when (schedule.scheduleType) {
                     ScheduleType.DAYS_OF_WEEK -> schedule.daysOfWeek.contains(currentDayOfWeek)
                     ScheduleType.INTERVAL -> {
-                        val daysDiff = TimeUnit.MILLISECONDS.toDays(startOfDay - schedule.startDateMillis).toInt()
-                        daysDiff >= 0 && (daysDiff % schedule.intervalDays == 0)
+                        val daysSinceStart = getDaysBetween(schedule.startDateMillis, calendar.timeInMillis)
+                        daysSinceStart >= 0 && daysSinceStart % schedule.intervalDays == 0L
                     }
                     ScheduleType.CYCLE -> {
-                        val daysDiff = TimeUnit.MILLISECONDS.toDays(startOfDay - schedule.startDateMillis).toInt()
-                        val totalCycle = schedule.cycleIntakeDays + schedule.cyclePauseDays
-                        if (daysDiff >= 0 && totalCycle > 0) {
-                            (daysDiff % totalCycle) < schedule.cycleIntakeDays
-                        } else false
+                        val daysSinceStart = getDaysBetween(schedule.startDateMillis, calendar.timeInMillis)
+                        if (daysSinceStart < 0) false
+                        else {
+                            val cycleLength = schedule.cycleIntakeDays + schedule.cyclePauseDays
+                            val dayInCycle = (daysSinceStart % cycleLength).toInt()
+                            dayInCycle < schedule.cycleIntakeDays
+                        }
                     }
                 }
 
                 if (isScheduled) {
-                    val timeParts = schedule.time.split(":")
-                    val hour = timeParts.getOrNull(0)?.toIntOrNull() ?: continue
-                    val minute = timeParts.getOrNull(1)?.toIntOrNull() ?: continue
-
                     val logCalendar = Calendar.getInstance().apply {
-                        timeInMillis = calendar.timeInMillis
-                        set(Calendar.HOUR_OF_DAY, hour)
-                        set(Calendar.MINUTE, minute)
+                        timeInMillis = startOfDay
+                        val parts = schedule.time.split(":")
+                        set(Calendar.HOUR_OF_DAY, parts[0].toInt())
+                        set(Calendar.MINUTE, parts[1].toInt())
                         set(Calendar.SECOND, 0)
                         set(Calendar.MILLISECOND, 0)
                     }
@@ -221,50 +285,41 @@ class MedicationRepository(database: AppDatabase) {
                     }
 
                     if (!exists) {
-                        val logId = intakeLogDao.insertLog(
+                        intakeLogDao.insertLog(
                             IntakeLogEntity(
                                 medicationId = schedule.medicationId,
                                 scheduledTimeMillis = scheduledMillis,
                                 status = IntakeStatus.PENDING
                             )
                         )
-
-                        if (scheduledMillis > System.currentTimeMillis()) {
-                            val med = medications[schedule.medicationId]
-                            AlarmScheduler.scheduleAlarm(
-                                context = context,
-                                logId = logId,
-                                medicationId = schedule.medicationId,
-                                timeMillis = scheduledMillis,
-                                medicationName = med?.name ?: "Препарат",
-                                dosage = med?.dosage ?: "",
-                                notifyBeforeMinutes = med?.notifyBeforeMinutes ?: 0,
-                                snoozeMinutes = med?.snoozeMinutes ?: 10
-                            )
-                        }
                     }
                 }
             }
         }
     }
 
-    private fun getStartOfDay(timeMillis: Long): Long {
-        return Calendar.getInstance().apply {
-            timeInMillis = timeMillis
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    }
+    private suspend fun scheduleUpcomingAlarms(context: Context) {
+        val now = System.currentTimeMillis()
+        val windowEnd = now + TimeUnit.HOURS.toMillis(48)
 
-    private fun getEndOfDay(timeMillis: Long): Long {
-        return Calendar.getInstance().apply {
-            timeInMillis = timeMillis
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }.timeInMillis
+        val upcomingLogs = intakeLogDao.getUpcomingLogs().first()
+        val pendingInWindow = upcomingLogs.filter {
+            it.status == IntakeStatus.PENDING && it.scheduledTimeMillis in (now + 1)..windowEnd
+        }
+        val medications = medicationDao.getAllMedications().first().associateBy { it.id }
+
+        for (log in pendingInWindow) {
+            val med = medications[log.medicationId] ?: continue
+            AlarmScheduler.scheduleAlarm(
+                context = context,
+                logId = log.id,
+                medicationId = log.medicationId,
+                timeMillis = log.scheduledTimeMillis,
+                medicationName = med.name,
+                dosage = med.dosage,
+                notifyBeforeMinutes = med.notifyBeforeMinutes,
+                snoozeMinutes = med.snoozeMinutes
+            )
+        }
     }
 }

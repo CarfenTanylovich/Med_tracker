@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+/app/
+repomix-output.xml
+repomix-output.txt

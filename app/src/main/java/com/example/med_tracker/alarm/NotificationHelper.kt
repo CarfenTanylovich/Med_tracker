@@ -15,6 +15,8 @@ object NotificationHelper {
     private const val CHANNEL_ID = "medication_reminders_channel"
     private const val CHANNEL_NAME = "Напоминания о приеме лекарств"
 
+    fun notificationIdFor(logId: Long): Int = (logId % 100_000L).toInt()
+
     fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -41,7 +43,7 @@ object NotificationHelper {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createNotificationChannel(context)
 
-        val notificationId = logId.toInt()
+        val notificationId = notificationIdFor(logId)
 
         val contentIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -109,6 +111,11 @@ object NotificationHelper {
             .build()
 
         notificationManager.notify(notificationId, notification)
+    }
+
+    fun cancelNotification(context: Context, logId: Long) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(notificationIdFor(logId))
     }
 
     fun cancelNotification(context: Context, notificationId: Int) {

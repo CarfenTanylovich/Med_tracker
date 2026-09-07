@@ -28,4 +28,7 @@ interface MedicationDao {
 
     @Query("UPDATE medications SET remainingQuantity = remainingQuantity - 1 WHERE id = :id AND remainingQuantity > 0")
     suspend fun decrementQuantity(id: Long)
+
+    @Query("UPDATE medications SET remainingQuantity = :quantity WHERE id = :id")
+    suspend fun updateQuantity(id: Long, quantity: Int)
 }

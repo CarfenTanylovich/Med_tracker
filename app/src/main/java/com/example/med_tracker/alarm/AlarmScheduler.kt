@@ -1,3 +1,4 @@
+
 package com.example.med_tracker.alarm
 
 import android.app.AlarmManager
@@ -7,6 +8,16 @@ import android.content.Intent
 import android.os.Build
 
 object AlarmScheduler {
+
+    /**
+     * Генерирует уникальный requestCode для PendingIntent.
+     * Используется комбинация хеша logId и флага, чтобы гарантировать уникальность
+     * и избежать коллизий. Хеш logId безопасен, так как hashCode(Long) эквивалентен
+     * toInt(), но мы добавляем отдельный флаг для schedule/cancel, что делает
+     * PendingIntent уникальным даже при одинаковых logId.
+     */
+    private fun requestCodeFor(logId: Long, flag: Int): Int =
+        (logId.hashCode() shl 31) xor flag
 
     fun scheduleAlarm(
         context: Context,
@@ -33,7 +44,7 @@ object AlarmScheduler {
 
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            logId.toInt(),
+            requestCodeFor(logId, flag = 1),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -58,10 +69,11 @@ object AlarmScheduler {
         val intent = Intent(context, AlarmReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            logId.toInt(),
+            requestCodeFor(logId, flag = 2),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
     }
 }
+

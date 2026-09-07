@@ -1,18 +1,21 @@
 package com.example.med_tracker.presentation.cabinet
 
 import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.med_tracker.data.local.AppDatabase
 import com.example.med_tracker.data.local.entity.MedicationEntity
+import com.example.med_tracker.data.local.entity.ScheduleEntity
 import com.example.med_tracker.data.local.entity.ScheduleType
 import com.example.med_tracker.data.repository.MedicationRepository
+import com.example.med_tracker.di.SettingsPreferencesRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 enum class MedicationSortOrder(val title: String) {
     NAME_ASC("По названию (от А до Я)"),
@@ -21,11 +24,23 @@ enum class MedicationSortOrder(val title: String) {
     QUANTITY_DESC("По остатку (сначала больше)")
 }
 
-class CabinetViewModel(application: Application) : AndroidViewModel(application) {
+@HiltViewModel
+class CabinetViewModel @Inject constructor(
+    private val application: Application,
+    private val repository: MedicationRepository,
+    private val settingsRepository: SettingsPreferencesRepository
+) : ViewModel() {
 
-    private val repository = MedicationRepository(AppDatabase.getInstance(application))
+    private val _sortOrder = MutableStateFlow(MedicationSortOrder.NAME_ASC)
+    val sortOrder: StateFlow<MedicationSortOrder> = _sortOrder
 
-    val sortOrder = MutableStateFlow(MedicationSortOrder.NAME_ASC)
+    init {
+        viewModelScope.launch {
+            settingsRepository.sortOrder.collect { order ->
+                _sortOrder.value = order
+            }
+        }
+    }
 
     val medications: StateFlow<List<MedicationEntity>> = repository.allMedications
         .combine(sortOrder) { list, order ->
@@ -42,16 +57,18 @@ class CabinetViewModel(application: Application) : AndroidViewModel(application)
             initialValue = emptyList()
         )
 
-    fun setSortOrder(order: MedicationSortOrder) {
-        sortOrder.value = order
+    suspend fun getScheduleData(medicationId: Long): Pair<List<String>, ScheduleEntity?> {
+        val schedules = repository.getSchedulesForMedication(medicationId)
+        val times = schedules.map { it.time }.ifEmpty { listOf("08:00") }
+        return Pair(times, schedules.firstOrNull())
     }
 
     fun addMedication(
         name: String,
         form: String,
         dosage: String,
-        quantity: Int,
         unit: String,
+        initialQuantity: Int,
         times: List<String>,
         scheduleType: ScheduleType,
         daysOfWeek: List<Int>,
@@ -62,29 +79,35 @@ class CabinetViewModel(application: Application) : AndroidViewModel(application)
         snoozeMinutes: Int
     ) {
         viewModelScope.launch {
-            val entity = MedicationEntity(
+            val medication = MedicationEntity(
                 name = name,
                 form = form,
                 dosage = dosage,
-                remainingQuantity = quantity,
                 unit = unit,
+                remainingQuantity = initialQuantity,
                 notifyBeforeMinutes = notifyBeforeMinutes,
                 snoozeMinutes = snoozeMinutes
             )
             repository.addMedicationWithSchedules(
-                medication = entity,
+                medication = medication,
                 times = times,
                 scheduleType = scheduleType,
                 daysOfWeek = daysOfWeek,
                 intervalDays = intervalDays,
                 cycleIntakeDays = cycleIntakeDays,
                 cyclePauseDays = cyclePauseDays,
-                context = getApplication()
+                context = application
             )
         }
     }
 
-    fun updateMedicationFull(
+    fun deleteMedication(medication: MedicationEntity) {
+        viewModelScope.launch {
+            repository.deleteMedication(medication, application)
+        }
+    }
+
+    fun updateMedication(
         medication: MedicationEntity,
         times: List<String>,
         scheduleType: ScheduleType,
@@ -102,24 +125,20 @@ class CabinetViewModel(application: Application) : AndroidViewModel(application)
                 intervalDays = intervalDays,
                 cycleIntakeDays = cycleIntakeDays,
                 cyclePauseDays = cyclePauseDays,
-                context = getApplication()
+                context = application
             )
         }
     }
 
-    suspend fun getScheduleTimes(medicationId: Long): List<String> {
-        return repository.getScheduleTimesForMedication(medicationId)
-    }
-
-    fun deleteMedication(medication: MedicationEntity) {
+    fun updateQuantity(medicationId: Long, quantity: Int) {
         viewModelScope.launch {
-            repository.deleteMedication(medication)
+            repository.updateMedicationQuantity(medicationId, quantity)
         }
     }
 
-    fun updateMedication(medication: MedicationEntity) {
+    fun updateSortOrder(order: MedicationSortOrder) {
         viewModelScope.launch {
-            repository.updateMedication(medication)
+            settingsRepository.saveSortOrder(order)
         }
     }
 }
