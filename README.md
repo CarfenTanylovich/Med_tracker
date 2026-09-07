@@ -1,6 +1,6 @@
 # 💊 Учет таблеточек
 
-Навайбкодил для себя удобное приложение для учета таблеток
+Навайбкодил для себя удобное приложение для учета таблеток. Пейте таблетки, шизы!
 
 [![Latest Release](https://img.shields.io/github/v/release/CarfenTanylovich/Med_tracker?color=blue&label=Релиз)](https://github.com/CarfenTanylovich/Med_tracker/releases/latest)
 
