@@ -1,0 +1,26 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Верхняя грань таблетки -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.5,8.5 C4.5,5.5 7.8,3.5 12,3.5 C16.2,3.5 19.5,5.5 19.5,8.5 C19.5,11.5 16.2,13.5 12,13.5 C7.8,13.5 4.5,11.5 4.5,8.5 Z" />
+    <!-- Объем (толщина таблетки) -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4.5,8.5 V14 C4.5,17 7.8,19 12,19 C16.2,19 19.5,17 19.5,14 V8.5" />
+    <!-- Риска по центру -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M8,7 L16,10" />
+</vector>
