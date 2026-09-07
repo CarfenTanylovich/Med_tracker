@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 enum class AppThemeMode(val title: String) {
     SYSTEM("Системная"),
@@ -24,6 +25,7 @@ enum class AppThemeMode(val title: String) {
     AMOLED("Тёмная AMOLED")
 }
 
+// Fallback colors для устройств с API < 31
 private val FallbackDarkColorScheme = darkColorScheme(
     primary = Color(0xFFD0BCFF),
     secondary = Color(0xFFCCC2DC),
@@ -31,54 +33,80 @@ private val FallbackDarkColorScheme = darkColorScheme(
 )
 
 private val FallbackLightColorScheme = lightColorScheme(
-    primary = Color(0xFF6650A4),
-    secondary = Color(0xFF625B71),
-    tertiary = Color(0xFF7D5260)
+    primary = Color(0xFF825500),
+    secondary = Color(0xFFA1755F),
+    tertiary = Color(0xFFFDCA74)
 )
 
-private fun ColorScheme.toAmoled(): ColorScheme {
-    return this.copy(
-        background = Color.Black,
-        surface = Color.Black,
-        surfaceDim = Color.Black,
-        surfaceBright = Color(0xFF121212),
-        surfaceContainerLowest = Color.Black,
-        surfaceContainerLow = Color(0xFF0A0A0A),
-        surfaceContainer = Color(0xFF121212),
-        surfaceContainerHigh = Color(0xFF1A1A1A),
-        surfaceContainerHighest = Color(0xFF222222),
-        surfaceVariant = Color(0xFF161616)
-    )
-}
+/**
+ * Converts a dark color scheme to AMOLED mode by setting the background
+ * to pure black (0xFF000000) for OLED/AMOLED displays.
+ */
+private fun ColorScheme.toAmoled(): ColorScheme = copy(
+    background = Color.Black,
+    surface = Color.Black,
+    surfaceVariant = Color.Black,
+    surfaceContainerHighest = Color.Black,
+    surfaceContainerHigh = Color.Black,
+    surfaceContainer = Color.Black,
+    surfaceContainerLow = Color.Black,
+    surfaceContainerLowest = Color.Black,
+    surfaceDim = Color.Black,
+    surfaceBright = Color.Black.copy(alpha = 0.95f),
+)
 
+/**
+ * Main theme composable that applies the selected theme mode and configures
+ * system bars (status bar & navigation bar) colors.
+ */
 @Composable
 fun Med_trackerTheme(
-    themeMode: AppThemeMode = AppThemeMode.AMOLED,
+    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     content: @Composable () -> Unit
 ) {
+    val darkTheme = when (themeMode) {
+        AppThemeMode.AMOLED, AppThemeMode.DARK -> true
+        AppThemeMode.LIGHT -> false
+        AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+
+    val systemInDark = darkTheme
+    val baseDark = FallbackDarkColorScheme
+    val baseLight = FallbackLightColorScheme
+
     val context = LocalContext.current
-    val systemInDark = isSystemInDarkTheme()
-    val supportsDynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-    val baseDark = if (supportsDynamic) dynamicDarkColorScheme(context) else FallbackDarkColorScheme
-    val baseLight = if (supportsDynamic) dynamicLightColorScheme(context) else FallbackLightColorScheme
-
-    val colorScheme = when (themeMode) {
-        AppThemeMode.AMOLED -> baseDark.toAmoled()
-        AppThemeMode.DARK -> baseDark
-        AppThemeMode.LIGHT -> baseLight
-        AppThemeMode.SYSTEM -> if (systemInDark) baseDark else baseLight
+    val colorScheme = when {
+        // Динамические цвета на API 31+
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            when (themeMode) {
+                AppThemeMode.AMOLED, AppThemeMode.DARK -> dynamicDarkColorScheme(context)
+                AppThemeMode.LIGHT -> dynamicLightColorScheme(context)
+                AppThemeMode.SYSTEM -> if (systemInDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }
+        }
+        // Fallback для API < 31
+        else -> {
+            when (themeMode) {
+                AppThemeMode.AMOLED -> baseDark.toAmoled()
+                AppThemeMode.DARK -> baseDark
+                AppThemeMode.LIGHT -> baseLight
+                AppThemeMode.SYSTEM -> if (systemInDark) baseDark else baseLight
+            }
+        }
     }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
+        @Suppress("DEPRECATION")
         SideEffect {
-            val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.background.toArgb()
-            window.navigationBarColor = colorScheme.background.toArgb()
             val isLight = themeMode == AppThemeMode.LIGHT || (themeMode == AppThemeMode.SYSTEM && !systemInDark)
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isLight
-            WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = isLight
+            val window = (context as Activity).window
+            WindowInsetsControllerCompat(window, view).apply {
+                window.statusBarColor = colorScheme.background.toArgb()
+                window.navigationBarColor = colorScheme.background.toArgb()
+                isAppearanceLightStatusBars = isLight
+                isAppearanceLightNavigationBars = isLight
+            }
         }
     }
 
